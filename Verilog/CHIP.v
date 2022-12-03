@@ -12,7 +12,6 @@
 `define MUL   4'd10
 `define XOR   4'd11
 `define INV   4'd15
-
 module CHIP(clk,
             rst_n,
             // For mem_D
@@ -201,10 +200,9 @@ module Instruction_analysis(clk, rst_n, inst_code, pause, state, imm);
     output [31:0] imm;
 
     reg [3:0] state_reg;
-    reg stall, stall_next;
     reg [31:0] immediate;
     
-    assign state = (!stall) ? state_reg : MUL;
+    assign state = (!pause) ? state_reg : MUL;
     assign imm = immediate;
 
     always @(posedge clk) begin
@@ -230,18 +228,6 @@ module Instruction_analysis(clk, rst_n, inst_code, pause, state, imm);
         endcase
     end
 
-    always @(posedge clk) begin
-        if(!rst_n) stall <= 0;
-        else stall <= stall_next;
-    end
-    always @(*) begin
-        if(!rst_n) stall_next = 0;
-        else begin
-            if(pause) stall_next = !stall;
-            else state_next = stall; 
-        end
-    end
-
     always @(*) begin
         case(state)
             `AUIPC : immediate = {inst_code[31:12], 12'd0};
@@ -260,9 +246,9 @@ module Basic_ALU(clk, rst_n, state, in_A, in_B, pause, mem_addr_D);
     output pause;
     output [31:0] mem_addr_D;
 
-    // Construct valid signal by positive edge of (state == MUL)
-    wire valid, mul;
-    reg mul_prev; 
+    // Construct valid signal with stall and (state == MUL)
+    wire valid;
+    reg stall, stall_next;
     // Constant signal for multiplication mode
     wire [1:0] mul_mode;
     // result of ALU or of mulDiv
@@ -271,10 +257,9 @@ module Basic_ALU(clk, rst_n, state, in_A, in_B, pause, mem_addr_D);
     wire ready;
 
     assign mem_addr_D = (state == MUL) ? multiple_result : result;
-    assign mul = (state == MUL) ? 1 : 0;
-    assign valid = (mul && !mul_prev) ? 1 : 0;
+    assign valid = (state == MUL && !stall) ? 1 : 0;
     assign mul_mode = 2'd0;
-    assign pause = (valid || ready) ? 1 : 0;
+    assign pause = stall;
 
     always  @(*) begin
         case(state)
@@ -289,8 +274,14 @@ module Basic_ALU(clk, rst_n, state, in_A, in_B, pause, mem_addr_D);
         endcase
     end
     
-    always @(posedge clk) begin
-        mul_prev <= mul;
+    always @(posedge clk or negedge rst_n) begin
+        if (!rst_n) stall <= 0;
+        else stall <= stall_next;
+    end
+
+    always @(*) begin
+        if(valid || ready) stall_next <= !stall;
+        else stall_next <= stall;
     end
 
     mulDiv hw2ALU(.clk(clk), .rst_n(rst_n), .valid(valid), .mode(mul_mode), .in_A(in_A), .in_B(in_B), .ready(ready), .out(multiple_result));
