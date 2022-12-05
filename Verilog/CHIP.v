@@ -39,7 +39,7 @@ module CHIP(clk,
     // Do not modify this part!!!            //
     // Exception: You may change wire to reg //
     reg    [31:0] PC          ;              //
-    wire   [31:0] PC_nxt      ;              //
+    reg    [31:0] PC_nxt      ;              // change wire to reg
     wire          regWrite    ;              //
     wire   [ 4:0] rs1, rs2, rd;              //
     wire   [31:0] rs1_data    ;              //
@@ -49,16 +49,17 @@ module CHIP(clk,
 
     // Todo: other wire/reg
     // instruction reader's ports
-    wire pause, state;
+    wire pause;
+    wire [3:0] state;
     wire [31:0] imm;
     // reg_file's input
     wire load;
     wire reg_wen;
-    reg write_reg_number; // Current number of write register
+    reg [4:0] write_reg_number; // Current number of write register
     // Basic_ALU's inputs
     wire [31:0] in_A, in_B;
-    wire pause;
-    // Wires and regs for PC_next
+    
+    // Wires and regs for PC_nxt
     wire beq;
     reg [31:0] address;
 
@@ -78,7 +79,7 @@ module CHIP(clk,
     //---------------------------------------//
 
     // Todo: other submodules
-    instruction_analysis reader(
+    Instruction_analysis reader(
         .clk(clk),
         .rst_n(rst_n),
         .pause(pause),
@@ -97,22 +98,22 @@ module CHIP(clk,
     //==== Combinational Part =====================
     // Todo: any combinational/sequential circuit
     // inputs of reg0 (reg_file)
-    assign rs1[5:0] = mem_rdata_I[19:15];
-    assign rs2[5:0] = mem_rdata_I[24:20];
-    assign rd[5:0]  = write_reg_number;
+    assign rs1[4:0] = mem_rdata_I[19:15];
+    assign rs2[4:0] = mem_rdata_I[24:20];
+    assign rd[4:0]  = write_reg_number;
     assign rd_data[31:0] = clk ? mem_rdata_D : 
-                    (state == JAL || state == JALR || state == AUIPC) ? address : mem_rdata_D;
+                    (state == `JAL || state == `JALR || state == `AUIPC) ? address : mem_rdata_D;
     assign regWrite = clk ? load : reg_wen;
     //output of reg0
-    assign mem_data_D[31:0] = rs2_data;
+    assign mem_wdata_D[31:0] = rs2_data;
     // outputs of reader (instruction_analysis)
     assign mem_wen_D = (state == `SW) ? 1 : 0;
     assign load = (state == `LW) ? 1 : 0;
-    assign reg_wen = (state != BEQ && state != LW)? 1 : 0;
+    assign reg_wen = (state != `BEQ && state != `LW)? 1 : 0;
     // inputs of ALU0 (Basic_ALU)
-    assign in_A = (state == AUIPC || state == JAL || state == JALR) ? PC : rs1_data;
-    assign in_B[31:0] = (state == ADD || state == SUB || state == XOR || state == MUL) ? rs2_data : imm;
-    // PC_next's part
+    assign in_A = (state == `AUIPC || state == `JAL || state == `JALR) ? PC : rs1_data;
+    assign in_B[31:0] = (state == `ADD || state == `SUB || state == `XOR || state == `MUL) ? rs2_data : imm;
+    // PC_nxt's part
     assign beq = (rs1_data == rs2_data) ? 1 : 0;
     assign mem_addr_I = address;
     //==== Sequential Part ========================
@@ -124,20 +125,20 @@ module CHIP(clk,
             PC <= PC_nxt;
         end
     end
-    // Todo: PC_next
+    // Todo: PC_nxt
     always @(*) begin
-        if (pause) PC_next <= PC;
-        else PC_next <= address;
+        if (pause) PC_nxt <= PC;
+        else PC_nxt <= address;
     end
 
     always @(*) begin
         case(state)
-            BEQ : begin
-                if (beq) address <= PC + (imm << 1);
-                else address <= PC+4;
+            `BEQ : begin
+                if (beq) address <= PC + imm; //shifted in Instruction_analysis
+                else address <= PC + 4;
             end
-            JAL : address <= PC + imm;
-            JALR : address <= imm;
+            `JAL : address <= PC + imm;
+            `JALR : address <= imm;
             default : address <= PC + 4;
         endcase
     end
@@ -166,6 +167,7 @@ module reg_file(clk, rst_n, wen, a1, a2, aw, d, q1, q2);
 
     assign q1 = mem[a1];
     assign q2 = mem[a2];
+    integer i;
 
     always @(*) begin
         for (i=0; i<word_depth; i=i+1)
@@ -197,44 +199,44 @@ module Instruction_analysis(clk, rst_n, inst_code, pause, state, imm);
     input clk, rst_n, pause;
     input [31:0] inst_code; // instruction's binary code
     output [3:0] state;
-    output [31:0] imm;
+    output [31:0] imm; //shifted
 
     reg [3:0] state_reg;
     reg [31:0] immediate;
     
-    assign state = (!pause) ? state_reg : MUL;
+    assign state = (!pause) ? state_reg : `MUL;
     assign imm = immediate;
 
     always @(posedge clk) begin
         case(inst_code[6:2])
-            00101 : state_reg = `AUIPC;
-            11011 : state_reg = `JAL;
-            11001 : state_reg = `JALR;
-            11000 : state_reg = `BEQ;
-            00000 : state_reg = `LW;
-            01000 : state_reg = `SW;
-            00100 : state_reg = (inst_code[13]) ? `SLTI : `ADDI;
+            00101 : state_reg <= `AUIPC;
+            11011 : state_reg <= `JAL;
+            11001 : state_reg <= `JALR;
+            11000 : state_reg <= `BEQ;
+            00000 : state_reg <= `LW;
+            01000 : state_reg <= `SW;
+            00100 : state_reg <= (inst_code[13]) ? `SLTI : `ADDI;
             01100 :
-                if (inst_code[14]) inst = `XOR;
+                if (inst_code[14]) state_reg <= `XOR;
                 else begin
-                    case({inst_code[30],inst_code[15]})
-                        00 : state_reg = `ADD;
-                        10 : state_reg = `SUB;
-                        01 : state_reg = `MUL;
-                        default : state_reg = `INV;
+                    case({inst_code[30],inst_code[25]})
+                        00 : state_reg <= `ADD;
+                        10 : state_reg <= `SUB;
+                        01 : state_reg <= `MUL;
+                        default : state_reg <= `INV;
                     endcase
                 end
-            default : state_reg = `INV;
+            default : state_reg <= `INV;
         endcase
     end
 
     always @(*) begin
         case(state)
-            `AUIPC : immediate = {inst_code[31:12], 12'd0};
-            `JAL   : immediate = {11'd0, inst_code[31], inst_code[19:12], inst_code[20], inst_code[30:21], 1'd0};
-            `BEQ   : immediate = {19'd0, inst_code[31], inst_code[7], inst_code[30:25], inst_code[11:8]};
-            `SW    : immediate = {20'd0, inst_code[31:25], inst_code[11:7]};
-            default : immediate = {20'd0, inst_code[31:20]};
+            `AUIPC : immediate <= {inst_code[31:12], 12'd0};
+            `JAL   : immediate <= {11'd0, inst_code[31], inst_code[19:12], inst_code[20], inst_code[30:21], 1'd0};
+            `BEQ   : immediate <= {19'd0, inst_code[31], inst_code[7], inst_code[30:25], inst_code[11:8], 1'd0};
+            `SW    : immediate <= {20'd0, inst_code[31:25], inst_code[11:7]};
+            default : immediate <= {20'd0, inst_code[31:20]};
         endcase
     end
 endmodule
@@ -252,22 +254,26 @@ module Basic_ALU(clk, rst_n, state, in_A, in_B, pause, mem_addr_D);
     // Constant signal for multiplication mode
     wire [1:0] mul_mode;
     // result of ALU or of mulDiv
-    reg [31:0] result, multiple_result; 
+    reg [31:0] result;
+    wire [63:0] multiple_result;
 
     wire ready;
 
-    assign mem_addr_D = (state == MUL) ? multiple_result : result;
-    assign valid = (state == MUL && !stall) ? 1 : 0;
+    assign mem_addr_D = (state == `MUL) ? multiple_result[31:0] : result;
+    assign valid = (state == `MUL && !stall) ? 1 : 0;
     assign mul_mode = 2'd0;
     assign pause = stall;
 
     always  @(*) begin
         case(state)
             `JAL: result <= in_A + 4;
+            // rd = old_PC+4, new_PC = result = rs1+imm
+            // in_A = PC, in_B = imm, `JALR wrong?
             `JALR: result <= in_A + 4;
             `SLTI: begin
                 if (in_A < in_B) result <= 32'd1;
                 else result <= 32'd0;
+            end
             `SUB: result <= in_A - in_B;
             `XOR: result <= in_A ^ in_B;
             default: result <= in_A + in_B;
